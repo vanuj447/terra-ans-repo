@@ -1,0 +1,71 @@
+---
+- name: Deploy React App (portfolio)
+  hosts: webservers
+  become: true
+  vars:
+    app_dir: /home/ubuntu/portfolio
+  tasks:
+    - name: Ensure build dependencies
+      apt:
+        name: [nodejs, npm, nginx, git]
+        state: present
+        update_cache: yes
+
+    - name: Clone or update repo
+      git:
+        repo: "{{ lookup('env','GITHUB_REPO') | default('https://github.com/vanuj447/portfolio-anuj.git') }}"
+        dest: "{{ app_dir }}"
+        update: yes
+
+    - name: Install npm packages
+      command: npm ci
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Build the React app
+      command: npm run build
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Ensure webroot exists and copy build
+      file:
+        path: /var/www/portfolio
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0755
+
+    - name: Copy build to webroot
+      command: cp -r {{ app_dir }}/build/* /var/www/portfolio/
+      args:
+        warn: false
+
+    - name: Write nginx site config
+      copy:
+        dest: /etc/nginx/sites-available/portfolio
+        content: |
+          server {
+              listen 80;
+              server_name _;
+              root /var/www/portfolio;
+              index index.html;
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+    - name: Enable site
+      file:
+        src: /etc/nginx/sites-available/portfolio
+        dest: /etc/nginx/sites-enabled/portfolio
+        state: link
+
+    - name: Remove default site (if exists)
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      ignore_errors: yes
+
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
